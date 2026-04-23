@@ -69,18 +69,43 @@ class BugHoundAgent:
             f"CODE:\n{code_snippet}"
         )
 
-        # UPDATED: Added exception handling for API errors/rate limits
+        # Try LLM once with granular error handling
         try:
             raw = self.client.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         except Exception as e:
-            self._log("ANALYZE", f"API Error: {str(e)}. Falling back to heuristics.")
+            err_msg = str(e)
+            if "rate limit" in err_msg.lower():
+                self._log("ANALYZE", f"LLM Rate Limit Error: {err_msg}. Falling back to heuristics.")
+            elif "network" in err_msg.lower() or "timeout" in err_msg.lower():
+                self._log("ANALYZE", f"LLM Network/Timeout Error: {err_msg}. Falling back to heuristics.")
+            else:
+                self._log("ANALYZE", f"LLM Unknown API Error: {err_msg}. Falling back to heuristics.")
             return self._heuristic_analyze(code_snippet)
 
         issues = self._parse_json_array_of_issues(raw)
 
-        if issues is None:
-            self._log("ANALYZE", "LLM output was not parseable JSON. Falling back to heuristics.")
-            return self._heuristic_analyze(code_snippet)
+        if issues is None or (isinstance(raw, str) and not raw.strip()):
+            self._log("ANALYZE", "LLM output empty or unparseable. Retrying once.")
+            # Retry once deterministically
+            try:
+                raw2 = self.client.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+            except Exception as e:
+                err_msg = str(e)
+                if "rate limit" in err_msg.lower():
+                    self._log("ANALYZE", f"LLM Rate Limit Error on retry: {err_msg}. Falling back to heuristics.")
+                elif "network" in err_msg.lower() or "timeout" in err_msg.lower():
+                    self._log("ANALYZE", f"LLM Network/Timeout Error on retry: {err_msg}. Falling back to heuristics.")
+                else:
+                    self._log("ANALYZE", f"LLM Unknown API Error on retry: {err_msg}. Falling back to heuristics.")
+                return self._heuristic_analyze(code_snippet)
+            issues2 = self._parse_json_array_of_issues(raw2)
+            if issues2 is None or (isinstance(raw2, str) and not raw2.strip()):
+                if isinstance(raw2, str) and not raw2.strip():
+                    self._log("ANALYZE", "Second LLM attempt failed: empty output. Falling back to heuristics.")
+                else:
+                    self._log("ANALYZE", "Second LLM attempt failed: unparseable output. Falling back to heuristics.")
+                return self._heuristic_analyze(code_snippet)
+            return issues2
 
         return issues
 

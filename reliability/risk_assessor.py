@@ -43,8 +43,9 @@ def assess_risk(
             score -= 20
             reasons.append("Medium severity issue detected.")
         elif severity == "low":
-            score -= 5
-            reasons.append("Low severity issue detected.")
+            score -= 2
+            reasons.append("Low severity issue detected (relaxed penalty).")
+
 
     # ----------------------------
     # Structural change checks
@@ -62,6 +63,17 @@ def assess_risk(
         score -= 5
         reasons.append("Bare except was modified, verify correctness.")
 
+    # Penalize if more than 20% of lines changed, but relax penalty for small changes
+    line_delta = abs(len(fixed_lines) - len(original_lines))
+    if len(original_lines) > 0:
+        change_ratio = line_delta / len(original_lines)
+        if change_ratio > 0.2:
+            score -= 15
+            reasons.append("More than 20% of lines changed in fix.")
+        elif change_ratio > 0.1:
+            score -= 5
+            reasons.append("More than 10% of lines changed in fix (relaxed penalty).")
+
     # ----------------------------
     # Clamp score
     # ----------------------------
@@ -77,10 +89,11 @@ def assess_risk(
     else:
         level = "high"
 
+
     # ----------------------------
-    # Auto-fix policy
+    # Auto-fix policy (now stricter: require score >= 90)
     # ----------------------------
-    should_autofix = level == "low"
+    should_autofix = score >= 90
 
     if not reasons:
         reasons.append("No significant risks detected.")
